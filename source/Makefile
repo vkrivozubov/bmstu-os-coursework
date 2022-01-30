@@ -1,5 +1,6 @@
+KBUILD_EXTRA_SYMBOLS = $(shell pwd)/Module.symverscd
 ifneq ($(KERNELRELEASE),)
-	obj-m := main_md.o
+	obj-m := main_md.o mouse_md.o
 else
 	CURRENT = $(shell uname -r)
 	KDIR = /lib/modules/$(CURRENT)/build
@@ -7,14 +8,13 @@ else
 
 default:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
-	make clean
+	make cleanHalf
 
+cleanHalf:
+	rm -rf *.o *~ *.mod *.mod.c Module.* *.order  .tmp_versions
+	
 clean:
-	@rm -f *.o .*.cmd .*.flags *.mod.c *.order
-	@rm -f .*.*.cmd *~ *.*~ TODO.*
-	@rm -fR .tmp*
-	@rm -rf .tmp_versions
+	make cleanHalf
+	rm -rf *.ko .*.cmd .*.d
 
-disclean: clean
-	@rm *.ko *.symvers
 endif 
