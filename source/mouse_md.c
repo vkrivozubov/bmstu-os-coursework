@@ -13,7 +13,7 @@
 #define DRIVER_DESC "USB mouse driver"
 
 #define MODULE_INFO_PREFIX "usbmouse_driver"
-extern void send_mouse_data(mouse_event_data info);
+extern void send_mouse_data(char buttons, char dx, char dy, char wheel);
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
@@ -44,7 +44,12 @@ static void usb_mouse_irq(struct urb *urb)
 		.wheel = data[3]
 	};
 
-	send_mouse_data(info);
+	send_mouse_data(
+		data[0],
+		data[1],
+		data[2],
+		data[3]
+	);
 
 	switch (urb->status) {
 	case 0:			/* success */

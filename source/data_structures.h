@@ -15,7 +15,7 @@ struct mouse_data_package {
 typedef struct mouse_data_package mouse_data_package;
 
 struct keyboard_event_info {
-	char description[25];
+	char *description;
 };
 
 typedef struct keyboard_event_info keyboard_event_data;
