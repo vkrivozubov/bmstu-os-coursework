@@ -6,13 +6,14 @@
 #include <linux/init.h>
 #include <linux/usb/input.h>
 #include <linux/hid.h>
+#include "data_structures.h"
 
 #define DRIVER_VERSION "v1.6"
 #define DRIVER_AUTHOR "Krivozubov V.O"
 #define DRIVER_DESC "USB mouse driver"
 
 #define MODULE_INFO_PREFIX "usbmouse_driver"
-extern int send_mouse_data(char buttons, char dx, char dy, char wheel);
+extern void send_mouse_data(mouse_event_data info);
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
@@ -36,10 +37,14 @@ static void usb_mouse_irq(struct urb *urb)
 	struct input_dev *dev = mouse->dev;
 	int status;
 
-	if(send_mouse_data(data[0], data[1], data[2], data[3]) != 0)
-		printk(KERN_INFO "%s usb_mouse_irq can't send data\n", MODULE_INFO_PREFIX);
-	else
-		printk(KERN_INFO "%s usb_mouse_irq success\n", MODULE_INFO_PREFIX);
+	mouse_event_data info = {
+		.buttons = data[0],
+		.dx = data[1],
+		.dy = data[2],
+		.wheel = data[3]
+	};
+
+	send_mouse_data(info);
 
 	switch (urb->status) {
 	case 0:			/* success */
@@ -220,5 +225,4 @@ static struct usb_driver usb_mouse_driver = {
 	.disconnect	= usb_mouse_disconnect,
 	.id_table	= usb_mouse_id_table,
 };
-
 module_usb_driver(usb_mouse_driver);
