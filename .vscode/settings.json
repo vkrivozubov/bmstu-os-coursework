@@ -1,0 +1,13 @@
+{
+    "files.associations": {
+        "socket.h": "c",
+        "netlink.h": "c",
+        "net.h": "c",
+        "sockios.h": "c",
+        "posix_types.h": "c",
+        "stddef.h": "c",
+        "un.h": "c",
+        "errno.h": "c",
+        "errno-base.h": "c"
+    }
+}

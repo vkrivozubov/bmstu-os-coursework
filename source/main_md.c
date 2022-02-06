@@ -7,10 +7,21 @@
 #include <linux/keyboard.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/netlink.h>
+#include <linux/net.h>
+#include <linux/un.h>
+#include <asm/unistd.h>
+#include <linux/fs.h>
+#include <net/netlink.h>
 #include "data_structures.h"
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Krivozubov Vlad");
+
+int send_usrmsg(char *pbuf, uint16_t len);
+
+#define UNIQUE_MODULE 20
+#define USER_PORT 100
 
 #define PROCESS_CHECK_PERIOD 1000
 #define INPUT_DATA_PERIOD 2000
@@ -52,7 +63,13 @@ static struct timer_list input_data_timer;
 static struct timer_list report_timer;
 
 // сокет для передачи отчета
-struct socket *report_socket = NULL;
+struct sock *socketptr = NULL;
+static int sock_fd;
+int netlink_count = 0;
+char netlink_kmsg[30];
+extern struct net init_net;
+
+static int client_already_greeted = 0;
 
 static int isShiftKey = 0;
 int keylogger_handler(struct notifier_block *nblock, unsigned long code, void *_param){
@@ -199,8 +216,10 @@ void reset_after_report(void) {
 void handle_report_timer_call(struct timer_list *timer)
 {
 	printk("REPORT TIMER TRIGGERED!\n");
-	// тут будет большой бизнес логика с обработкой процессов и компановкой часового отчета
 
+    char *msg = "data from drivers";
+    send_usrmsg(msg, strlen(msg));
+    /*
     int i, j;
     printk("MOUSE DATA");
     for (i = 0; i < mouse_data_size; i++) {
@@ -239,7 +258,7 @@ void handle_report_timer_call(struct timer_list *timer)
             process_data[i].secs_in_use
         );
     }
-
+    */
     reset_after_report();
 	mod_timer(timer, jiffies + msecs_to_jiffies(REPORT_PERIOD));
 }
@@ -259,8 +278,110 @@ void setup_timers(void)
 	mod_timer(&report_timer, jiffies + msecs_to_jiffies(REPORT_PERIOD));
 }
 
+int send_usrmsg(char *pbuf, uint16_t len)
+{
+    struct sk_buff *nl_skb;
+    struct nlmsghdr *nlh;
+
+    int ret;
+
+    //Create sk_buff using nlmsg_new().
+    nl_skb = nlmsg_new(len, GFP_ATOMIC);
+    if(!nl_skb)
+    {
+        printk("netlink alloc failure\n");
+        return -1;
+    }
+
+    //Set up nlmsghdr.
+    nlh = nlmsg_put(nl_skb, 0, 0, UNIQUE_MODULE, len, 0);
+    if(nlh == NULL)
+    {
+        printk("nlmsg_put failaure/n");
+        nlmsg_free(nl_skb); //If nlmsg_put() failed, nlmsg_free() will free sk_buff.
+        return -1;
+    }
+
+   //Copy pbuf to nlmsghdr payload.
+    printk("sending");
+    memcpy(nlmsg_data(nlh), pbuf, len);
+    ret = netlink_unicast(socketptr, nl_skb, USER_PORT, MSG_DONTWAIT);
+
+    return ret;
+}
+
+static void nl_recv_msg (struct sk_buff *skb) {
+    if (client_already_greeted == 0) {
+        struct nlmsghdr *nlh = NULL;
+        char *umsg = NULL;
+    //char *kmsg = "hello users!!!";
+        char *kmsg;
+
+        if(skb->len >= nlmsg_total_size(0))
+        {
+            netlink_count++;
+            snprintf(netlink_kmsg, sizeof(netlink_kmsg), "hello users count=%d", netlink_count);
+            kmsg = netlink_kmsg;
+            nlh = nlmsg_hdr(skb); //Get nlmsghdr from sk_buff.
+            umsg = NLMSG_DATA(nlh);//Get payload from nlmsghdr.
+            if(umsg)
+            {
+                //printk("kernel recv from user: %s\n", umsg);
+                char *msg = "kernel is ready to report";
+                send_usrmsg(msg, strlen(msg));
+            }
+        }
+        client_already_greeted = 1;
+    }
+}
+
+struct netlink_kernel_cfg cfg = {
+    .input = nl_recv_msg,
+};
+
 static int __init md_init(void) 
 {
+    // setup client socket
+    socketptr = (struct sock *)netlink_kernel_create(&init_net, UNIQUE_MODULE, &cfg);
+
+    if (socketptr == NULL) {
+        printk("SOCKET CREATION FAILED");
+        return -1;
+    } else {
+        printk("SOCKET CREATION SUCCESSFULL");
+    }
+    /*
+    char *kmsg;
+    netlink_count++;
+    snprintf(netlink_kmsg, sizeof(netlink_kmsg), "hello users count=%d", netlink_count);
+    kmsg = netlink_kmsg;
+    send_usrmsg(kmsg, strlen(kmsg));
+    */
+
+    //struct msghdr *msg = kmalloc(sizeof(struct msghdr), GFP_USER);
+    //struct iovec *iov = kmalloc(sizeof(struct iovec), GFP_USER);
+    //char buffer[100] = { 0 };
+
+    //memset(msg, 0, sizeof(struct msghdr));
+    //memset(iov, 0, sizeof(struct msghdr));
+
+    //msg.msg_name = NULL;
+    //msg.msg_namelen = 0;
+    //iov.iov_base = buffer;
+    //iov.iov_len = 100;
+    //iov_iter_init(msg.msg_iter, READ, &iov, 1, 1);
+    /*
+    old_kernel
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = NULL;
+    msg.msg_controllen = 0;
+    msg.msg_flags = 0;
+    */
+    //copy_to_user();
+    //int sended_bytes = sock_sendmsg(report_socket, msg);
+    //printk("msgsend - %d", sended_bytes);
+
     int i, j;
     mouse_data = (mouse_data_package *)kmalloc(sizeof(mouse_data_package) * 200, GFP_KERNEL);
     if (!mouse_data) {
@@ -309,6 +430,11 @@ static int __init md_init(void)
 
 static void __exit md_exit(void) 
 {
+    if (socketptr) {
+        netlink_kernel_release(socketptr);
+        socketptr = NULL;
+    }   
+
     del_timer(&process_data_timer);
 	del_timer(&input_data_timer);
 	del_timer(&report_timer);
