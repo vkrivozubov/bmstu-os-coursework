@@ -18,6 +18,12 @@ typedef struct _user_msg_info
     char  msg[MSG_LEN];
 } user_msg_info;
 
+#define DEFAULT 0
+#define STATUS_TRANSMISSION 1
+#define PROCESS_TRANSMISSION 2
+
+static int state = DEFAULT;
+
 int main(int argc, char **argv)
 {
     int skfd;
@@ -30,6 +36,7 @@ int main(int argc, char **argv)
     char *connection_notification = "RECEIVER CONNECTED";
     char *ready_to_new_package = "CLIENT READY FOR NEW PACKAGE";
     int loop_count = 0;
+    setvbuf(stdout, NULL, _IONBF, 0);
 
    /*Create netlink socket*/
     skfd = socket(AF_NETLINK, SOCK_RAW, UNIQUE_MODULE);//Create a socket using user defined protocol NETLINK_TEST.
@@ -51,10 +58,10 @@ int main(int argc, char **argv)
         return -1;
     }
 
-   //Destination address.
+    //Destination address.
     memset(&daddr, 0, sizeof(daddr));
     daddr.nl_family = AF_NETLINK;
-    daddr.nl_pid = 0;   //to kernel 
+    daddr.nl_pid = 0; // to kernel 
     daddr.nl_groups = 0;
 
     nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PLOAD));
@@ -67,7 +74,7 @@ int main(int argc, char **argv)
 
     memcpy(NLMSG_DATA(nlh), connection_notification, strlen(connection_notification));
 
-    printf("sendto kernel:%s\n", umsg);
+    //printf("sendto kernel:%s\n", umsg);
     ret = sendto(skfd, nlh, nlh->nlmsg_len, 0, (struct sockaddr *)&daddr, sizeof(struct sockaddr_nl));
     if(!ret)
     {
@@ -75,7 +82,7 @@ int main(int argc, char **argv)
         close(skfd);
         exit(-1);
     }
-    while(loop_count < 11) {
+    while (1) {
        //Receive netlink message from kernel.
         memset(&u_info, 0, sizeof(u_info));
         len = sizeof(struct sockaddr_nl);
@@ -87,8 +94,32 @@ int main(int argc, char **argv)
             exit(-1);
         }
 
+        if (state == DEFAULT) {
+            if (!strncmp(u_info.msg, "status", 6)) {
+                printf("\nEVOLVE TO STATUS_TRANSMISSION STATE");
+                state = STATUS_TRANSMISSION;
+                printf("\nSTATUS REPORT PART\n");
+            }
+        } else if (state == STATUS_TRANSMISSION){
+            if (!strncmp(u_info.msg, "process", 7)) {
+                printf("\nEVOLVE TO PROCESS_TRANSMISSION STATE");
+                state = PROCESS_TRANSMISSION;
+                printf("\nPROCESS INFO REPORT PART\n");
+            } else {
+                printf("%s", u_info.msg);
+            }
+        } else {
+            if (!strncmp(u_info.msg, "complete", 8)) {
+                printf("EVOLVE TO DEFAULT STATE");
+                state = DEFAULT;
+            } else {
+                printf("%s\n", u_info.msg);
+            }
+        }
+
+        //printf("%s", u_info.msg);
         memcpy(NLMSG_DATA(nlh), ready_to_new_package, strlen(ready_to_new_package));
-        printf("send ready state to kernel:%s\n", umsg);
+        //printf("send ready state to kernel:%s\n", umsg);
         ret = sendto(skfd, nlh, nlh->nlmsg_len, 0, (struct sockaddr *)&daddr, sizeof(struct sockaddr_nl));
         if(!ret)
         {
@@ -97,8 +128,6 @@ int main(int argc, char **argv)
             exit(-1);
         }
 
-        printf("from kernel:%s\n", u_info.msg);
-   //usleep(1000);
     loop_count++;
     }
     close(skfd);

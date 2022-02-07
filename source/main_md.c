@@ -25,7 +25,7 @@ int send_usrmsg(char *pbuf, uint16_t len);
 
 #define PROCESS_CHECK_PERIOD 1000
 #define INPUT_DATA_PERIOD 2000
-#define REPORT_PERIOD 5000
+#define REPORT_PERIOD 11000
 
 static const char* keys[] = { 
     "\0", "ESC", "1", "2", "3", "4", "5", "6", "7", "8", 
@@ -57,6 +57,9 @@ static int mouse_data_size = 0;
 static keyboard_data_package *keyboard_data;
 static int keyboard_data_size = 0;
 
+static int *status_data;
+static int status_data_size = 0;
+
 // таймеры
 static struct timer_list process_data_timer;
 static struct timer_list input_data_timer;
@@ -71,22 +74,11 @@ extern struct net init_net;
 
 static int client_already_greeted = 0;
 
+static int transition_state = 0;
+
 static int isShiftKey = 0;
 int keylogger_handler(struct notifier_block *nblock, unsigned long code, void *_param){
     struct keyboard_notifier_param *param = _param;
-
-    // 9 - красный фон
-    // 10 - зеленый
-    
-    /*
-    printk("\033[48;5;10m \033[m"); // printk всегда делает /n
-    printk("\033[48;5;10m \033[m");
-    printk("\033[48;5;9m \033[m");
-    printk("\033[48;5;9m \033[m");
-    printk("\033[48;5;10m \033[m");
-    printk("\033[48;5;10m \033[m");
-    printk("\033[48;5;10m \033[m");
-    */
 
     if (code == KBD_KEYCODE) {
         if (param->value == 42 || param->value == 54) {
@@ -181,12 +173,23 @@ void handle_process_data_timer_call(struct timer_list *timer)
         handle_process(task->comm);
  	} while ((task = next_task(task)) != &init_task);
  	
-    mod_timer(timer, jiffies + msecs_to_jiffies(2000));	
+    mod_timer(timer, jiffies + msecs_to_jiffies(PROCESS_CHECK_PERIOD));	
 }
 
 void handle_input_data_timer_call(struct timer_list *timer)
 {
 	printk("INPUT DATA TIMER TRIGGERED!\n");
+
+    int status = 9;
+
+    if (mouse_data[mouse_data_size].size > 0) {
+        status = 10;
+    } else if (keyboard_data[keyboard_data_size].size > 0) {
+        status = 10;
+    }
+
+    status_data[status_data_size] = status;
+    status_data_size += 1;
 
     mouse_data_size += 1;
     keyboard_data_size += 1;
@@ -211,14 +214,41 @@ void reset_after_report(void) {
         process_data[i].secs_in_use = 0;
     }
     process_data_size = 0;
+
+    status_data_size = 0;
 }
 
 void handle_report_timer_call(struct timer_list *timer)
 {
 	printk("REPORT TIMER TRIGGERED!\n");
 
-    char *msg = "data from drivers";
+    // сначала отправляем статус
+    char msg[50] = "status\n";
     send_usrmsg(msg, strlen(msg));
+
+    int i;
+    for (i = 0; i < status_data_size; i++) {
+        memset(msg, 0, 50);
+        sprintf(msg, "\033[48;5;%dm \033[m ", status_data[i]);
+        send_usrmsg(msg, strlen(msg));
+    }
+
+    // отправляем процессы
+    memset(msg, 0, 50);
+    sprintf(msg, "process");
+    send_usrmsg(msg, strlen(msg));    
+
+    for (i = 0; i < process_data_size; i++) {
+        memset(msg, 0, 50);
+        sprintf(msg, "%s - %d", process_data[i].name, process_data[i].secs_in_use);
+        send_usrmsg(msg, strlen(msg));
+    }
+
+    // завершаем отправку отчета
+    memset(msg, 0, 50);
+    sprintf(msg, "complete");
+    send_usrmsg(msg, strlen(msg));
+
     /*
     int i, j;
     printk("MOUSE DATA");
@@ -302,7 +332,7 @@ int send_usrmsg(char *pbuf, uint16_t len)
         return -1;
     }
 
-   //Copy pbuf to nlmsghdr payload.
+    //Copy pbuf to nlmsghdr payload.
     printk("sending");
     memcpy(nlmsg_data(nlh), pbuf, len);
     ret = netlink_unicast(socketptr, nl_skb, USER_PORT, MSG_DONTWAIT);
@@ -314,20 +344,15 @@ static void nl_recv_msg (struct sk_buff *skb) {
     if (client_already_greeted == 0) {
         struct nlmsghdr *nlh = NULL;
         char *umsg = NULL;
-    //char *kmsg = "hello users!!!";
-        char *kmsg;
 
         if(skb->len >= nlmsg_total_size(0))
         {
-            netlink_count++;
-            snprintf(netlink_kmsg, sizeof(netlink_kmsg), "hello users count=%d", netlink_count);
-            kmsg = netlink_kmsg;
             nlh = nlmsg_hdr(skb); //Get nlmsghdr from sk_buff.
             umsg = NLMSG_DATA(nlh);//Get payload from nlmsghdr.
             if(umsg)
             {
                 //printk("kernel recv from user: %s\n", umsg);
-                char *msg = "kernel is ready to report";
+                char *msg = "kernel is ready to report\n";
                 send_usrmsg(msg, strlen(msg));
             }
         }
@@ -350,37 +375,6 @@ static int __init md_init(void)
     } else {
         printk("SOCKET CREATION SUCCESSFULL");
     }
-    /*
-    char *kmsg;
-    netlink_count++;
-    snprintf(netlink_kmsg, sizeof(netlink_kmsg), "hello users count=%d", netlink_count);
-    kmsg = netlink_kmsg;
-    send_usrmsg(kmsg, strlen(kmsg));
-    */
-
-    //struct msghdr *msg = kmalloc(sizeof(struct msghdr), GFP_USER);
-    //struct iovec *iov = kmalloc(sizeof(struct iovec), GFP_USER);
-    //char buffer[100] = { 0 };
-
-    //memset(msg, 0, sizeof(struct msghdr));
-    //memset(iov, 0, sizeof(struct msghdr));
-
-    //msg.msg_name = NULL;
-    //msg.msg_namelen = 0;
-    //iov.iov_base = buffer;
-    //iov.iov_len = 100;
-    //iov_iter_init(msg.msg_iter, READ, &iov, 1, 1);
-    /*
-    old_kernel
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-    msg.msg_control = NULL;
-    msg.msg_controllen = 0;
-    msg.msg_flags = 0;
-    */
-    //copy_to_user();
-    //int sended_bytes = sock_sendmsg(report_socket, msg);
-    //printk("msgsend - %d", sended_bytes);
 
     int i, j;
     mouse_data = (mouse_data_package *)kmalloc(sizeof(mouse_data_package) * 200, GFP_KERNEL);
@@ -418,6 +412,13 @@ static int __init md_init(void)
     process_data = (process *)kmalloc(sizeof(process) * 1000, GFP_KERNEL);
     if (!process_data) {
         printk("MEMORY ALLOCATION FAILED [PROCESS STORAGE]");
+        return -1;
+    }
+
+    status_data = (int *)kmalloc(sizeof(int) * 200, GFP_KERNEL);
+    if (!status_data) {
+        printk("MEMORY ALLOCATION FAILED [STATUS STORAGE]");
+        return -1;
     }
 
 	setup_timers();
@@ -460,6 +461,8 @@ static void __exit md_exit(void)
         kfree(process_data[i].name);
     }
     kfree(process_data);
+
+    kfree(status_data);
 
 	printk("OS_COURSEWORK module is unloaded.\n");
 }
